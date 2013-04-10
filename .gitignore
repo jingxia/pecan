@@ -45,3 +45,10 @@ betydump.sql
 .buildpath
 all/inst/tests/$HOME
 .Rproj.user
+
+#backup files
+*~
+
+# system setup files
+web/system.php
+web/db/config.php

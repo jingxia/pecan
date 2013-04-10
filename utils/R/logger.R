@@ -7,10 +7,10 @@
 # http://opensource.ncsa.illinois.edu/license.html
 #-------------------------------------------------------------------------------
 
-.local <- new.env() 
-.local$filename <- NA
-.local$console  <- TRUE
-.local$level    <- 0
+.utils.logger <- new.env() 
+.utils.logger$filename <- NA
+.utils.logger$console  <- TRUE
+.utils.logger$level    <- 0
 
 ##' Prints a debug message.
 ##' 
@@ -76,6 +76,30 @@ logger.error <- function(msg, ...) {
 	logger.message("ERROR", msg, ...)
 }
 
+##' Prints an severe message and stops execution.
+##' 
+##' This function will print a message and stop execution of the code. This
+##' should only be used if the application should terminate. If the session is
+##' non-interactive the error code can be specified which is returned to the shell.
+##'
+##' @param msg the message that should be printed.
+##' @param errorcode the error code to return when the session quits.
+##' @param ... any additional text that should be printed.
+##' @export
+##' @author Rob Kooper
+##' @examples
+##' \dontrun{
+##' logger.severe("missing parameters")
+##' }
+logger.severe <- function(msg, errorcode=1, ...) {
+	logger.message("SEVERE", msg, ...)
+	if (!interactive()) {
+     	quit(save="no", status=errorcode)
+    } else {
+		stop(paste(msg, ...))
+    }
+}
+
 ##' Prints a message at a certain log level.
 ##' 
 ##' This function will print a message. This is the function that is responsible for
@@ -91,19 +115,19 @@ logger.error <- function(msg, ...) {
 ##' logger.message("DEBUG", "variable", 5)
 ##' }
 logger.message <- function(level, msg, ...) {
-	if (logger.getLevelNumber(level) >= .local$level) {
+	if (logger.getLevelNumber(level) >= .utils.logger$level) {
 		dump.frames(dumpto="dump.log")
 		calls <- names(dump.log)
 	    func <- sub("\\(.*\\)", "", tail(calls[-(which(substr(calls, 0, 3) == "log"))], 1))
 	    if (length(func) == 0) {
 	    	func <- "console"
 	    }
-		text <- sprintf("%s %-5s [%s] : %s\n", Sys.time(), level, func, paste(msg, ...))
-		if (.local$console) {
-			cat(text)
+		text <- sprintf("%s %-6s [%s] : %s\n", Sys.time(), level, func, paste(msg, ...))
+		if (.utils.logger$console) {
+			cat(text, file=stderr())
 		}
-		if (!is.na(.local$filename)) {
-			cat(text, file=.local$filename, append=TRUE)
+		if (!is.na(.utils.logger$filename)) {
+			cat(text, file=.utils.logger$filename, append=TRUE)
 		}
 	}
 }
@@ -121,7 +145,7 @@ logger.message <- function(level, msg, ...) {
 ##' logger.setLevel("DEBUG")
 ##' }
 logger.setLevel <- function(level) {
-	.local$level = logger.getLevelNumber(level)
+	.utils.logger$level = logger.getLevelNumber(level)
 }
 
 ##' Returns numeric value for string
@@ -147,8 +171,10 @@ logger.getLevelNumber <- function(level) {
 		return(30)
 	} else if (toupper(level) == "ERROR") {
 		return(40)
+	} else if (toupper(level) == "SEVERE") {
+		return(40)
 	} else if (toupper(level) == "OFF") {
-		return(50)
+		return(60)
 	} else {
 		logger.warn(level, " is not a valid value, setting level to INFO")
 		return(logger.getLevelNumber("INFO"))
@@ -167,16 +193,18 @@ logger.getLevelNumber <- function(level) {
 ##' logger.getLevel()
 ##' }
 logger.getLevel <- function() {
-	if (.local$level < 10) {
+	if (.utils.logger$level < 10) {
 		return("ALL")
-	} else if (.local$level < 20) {
+	} else if (.utils.logger$level < 20) {
 		return("DEBUG")
-	} else if (.local$level < 30) {
+	} else if (.utils.logger$level < 30) {
 		return("INFO")
-	} else if (.local$level < 40) {
+	} else if (.utils.logger$level < 40) {
 		return("WARN")
-	} else if (.local$level < 50) {
+	} else if (.utils.logger$level < 50) {
 		return("ERROR")
+	} else if (.utils.logger$level < 60) {
+		return("SEVERE")
 	} else {
 		return("OFF")
 	}
@@ -194,7 +222,7 @@ logger.getLevel <- function() {
 ##' logger.setUseConsole(TRUE)
 ##' }
 logger.setUseConsole <- function(console) {
-	.local$console <- console
+	.utils.logger$console <- console
 }
 
 ##' Configure logging output filename.
@@ -209,5 +237,5 @@ logger.setUseConsole <- function(console) {
 ##' logger.setOutputFile("pecan.log")
 ##' }
 logger.setOutputFile <- function(filename) {
-	.local$filename <- filename
+	.utils.logger$filename <- filename
 }

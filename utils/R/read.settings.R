@@ -9,71 +9,11 @@
 library(XML)
 
 ##--------------------------------------------------------------------------------------------------#
-## INTERNAL FUNCTIONS DO NOT EXPORT
+## EXTERNAL FUNCTIONS
 ##--------------------------------------------------------------------------------------------------#
-                                        #
-##'  merge 2 xml documents
-##'
-##' combines content from xml1 and xml2. In the case of a conflict (both xml1 and xml2 have the same node), node in xml2 replaces node in xml1 
-##' @title xmlMerge
-##' @param xml1 first xml list 
-##' @param xml2 second xml list
-##' @export
-##' @return xml object with 
-##' @author Rob Kooper
-xmlMerge <- function(xml1, xml2) {
-  if (is.null(xml2)) {
-    return(xml1)
-  }
-  
-  ## TODO no merging for now, it will simply return latest file
-  ## TODO see https://ebi-forecast.igb.illinois.edu/redmine/issues/1091
-  return(xml2)
-  
-  ##  if (is.null(xml1)) {
-  ##    return(xml2)
-  ##  }
-  ##   
-  ##  xmlMergeNodes(xmlRoot(xml1), xmlRoot(xml2))
-  ##  return(xml1)
-}
 
-
-##' merge 2 nodes, this is called recursively
-##'
-##' @title xmlMergeNodes
-##' @param node1 
-##' @param node2 
-##' @return merged nodes
-##' @author Rob Kooper
-xmlMergeNodes <- function(node1, node2) {
-  ## first replace all attributes from node2 to node1
-  if (!is.null(xmlAttrs(node2))) {
-    addAttributes(node=node1, .attrs=xmlAttrs(node2), append=TRUE)   
-  }
-  
-  ## add all nodes in node2 that are not in node1
-  kidsnames <- names(node2)[!(names(node2) %in% names(node1))]
-  if (length(kidsnames) > 0) {
-    addChildren(node1, kids=xmlChildren(node2)[kidsnames])
-  }
-  
-  ## loop through all nodes in common
-  for(name in names(node2)[names(node2) %in% names(node1)]) {
-    if ("XMLInternalCommentNode" %in% class(node1[[name]])) {
-      next
-    }
-    if ((length(names(xmlChildren(node1[[name]]))) == 1) &&( names(xmlChildren(node1[[name]])) == "text")) {
-      addAttributes(node=node1[[name]], .attrs=xmlAttrs(node2[[name]]), append=TRUE)
-      addAttributes(node=node2[[name]], .attrs=xmlAttrs(node1[[name]]), append=FALSE)
-      replaceNodes(node1[[name]], node2[[name]])
-    } else {
-      xmlMergeNodes(xmlChildren(node1)[[name]], xmlChildren(node2)[[name]])         
-    }
-  }
-}
-
-##' Sanity checks. Checks the settings file to make sure expected fields exist.
+##' Sanity checks. Checks the settings file to make sure expected fields exist. It will try to use
+##' default values for any missing values, or stop the exection if no defaults are possible.
 ##'
 ##' Expected fields in settings file are:
 ##' - pfts with at least one pft defined
@@ -81,10 +21,10 @@ xmlMergeNodes <- function(node1, node2) {
 ##' - model
 ##' - run with the following fields
 ##' -- site with id
-##' -- host with name
 ##' @title Check Settings
 ##' @param settings settings file
-##' @return error if minimum fields are not provided
+##' @return will return the updated settings values with defaults set.
+##' @export
 ##' @author Rob Kooper
 check.settings <- function(settings) {
   if (!is.null(settings$nocheck)) {
@@ -92,81 +32,251 @@ check.settings <- function(settings) {
     return(0)
   }
 
-  # check database information
-  if (is.null(settings$database)) {
-    stop("No database information specified.")
-  }
-  if (is.null(settings$database$userid)) {
-    stop("No userid specified for the database")
-  }
-  if (is.null(settings$database$passwd)) {
-    stop("No passwd specified for the database")
-  }
-  if (is.null(settings$database$name)) {
-    stop("No name specified for the database")
-  }
-  if (is.null(settings$database$name)) {
-    settings$database$location = "localhost"
-    logger.info("Setting localhost for database location.")
+  # should runs be written to database
+  if (is.null(settings$bety$write)) {
+    logger.info("Writing all runs/configurations to database.")
+    settings$bety$write <- TRUE
+  } else {
+    settings$bety$write <- as.logical(settings$bety$write)
+    if (settings$bety$write) {
+      logger.debug("Writing all runs/configurations to database.")
+    } else {
+      logger.warn("Will not write runs/configurations to database.")
+    }
   }
 
-  # TODO do a quick connection
+  # check database information
+  if (is.null(settings$database)) {
+    logger.severe("No database information specified.")
+  }
+  if (is.null(settings$database$driver)) {
+    settings$database$driver <- "MySQL"
+    logger.info("Using", settings$database$driver, "as database driver.")
+  }
+  if (!is.null(settings$database$userid) && (settings$database$driver == "MySQL")) {
+    logger.info("userid in database section should be username for MySQL")
+    settings$database$username <- settings$database$userid
+    settings$database$userid <- NULL
+  }
+  if (!is.null(settings$database$passwd) && (settings$database$driver == "MySQL")) {
+    logger.info("passwd in database section should be password for MySQL")
+    settings$database$password <- settings$database$passwd
+    settings$database$passwd <- NULL
+  }
+  if (!is.null(settings$database$name) && (settings$database$driver == "MySQL")) {
+    logger.info("name in database section should be dbname for MySQL")
+    settings$database$dbname <- settings$database$name
+    settings$database$name <- NULL
+  }
+  if (!db.exists(params=settings$database, write=settings$bety$write)) {
+    logger.severe("Could not connect to the database.")
+  }
 
   # TODO check userid and userpassword
 
+  # make sure there are pfts defined
+  if (is.null(settings$pfts) || (length(settings$pfts) == 0)) {
+    logger.severe("No PFTS specified.")
+  }
+
   # check to make sure run information is filled out
   if (is.null(settings$run$host$name)) {
-    stop("Did not set hostname in run section.")
+    logger.info("Setting localhost for execution host.")
+    settings$run$host$name = "localhost"
   }
   if (settings$run$host$name != "localhost") {
     if (is.null(settings$run$host$rundir)) {
-      stop("not rundir specified on remote machine.")
+      logger.severe("not rundir specified on remote machine.")
     }
     if (is.null(settings$run$host$outdir)) {
-      stop("not outdir specified on remote machine.")
+      logger.severe("not outdir specified on remote machine.")
     }
   }
 
-  # make sure there are pfts defined
-  if (is.null(settings$pfts) || (length(settings$pfts) == 0)) {
-    stop("No PFTS specified.")
+  # check meta-analysis
+  if (is.null(settings$meta.analysis) || is.null(settings$meta.analysis$iter)) {
+    settings$meta.analysis$iter <- 3000
+    logger.info("Setting meta.analysis iterations to ", settings$meta.analysis$iter)
   }
-}
+  if (is.null(settings$meta.analysis$random.effects)) {
+    settings$meta.analysis$random.effects <- FALSE
+    logger.info("Setting meta.analysis random effects to ", settings$meta.analysis$random.effects)
+  }
 
-listToXml <- function(item, tag){
-  if(typeof(item)!='list')
-    return(xmlNode(tag, item))
-  xml <- xmlNode(tag)
-  for(i in seq(length(item))) {
-    if (names(item[i]) == ".attrs") {
-      for(name in names(item$.attrs)) {
-        xmlAttrs(xml)[[name]] <- item$.attrs[[name]]
+  # check modelid with values
+  if (is.null(settings$model$id)) {
+    settings$model$id <- -1
+  } else if (settings$model$id >= 0) {
+    model <- db.query(paste("SELECT * FROM models WHERE id =", settings$model$id), params=settings$database)
+    if(nrow(model) == 0) {
+      logger.error("There is no record of model_id = ", settings$model$id, "in database")
+    }
+    model$binary <- tail(strsplit(model$model_path, ":")[[1]], 1)
+
+    if (is.null(settings$model$name)) {
+      if ((is.null(model$model_type) && model$model_type == "")) {
+        logger.severe("No model type specified.")
       }
-    } else {
-      xml <- append.xmlNode(xml, listToXml(item[[i]], names(item[i])))
+      settings$model$name <- model$model_type
+      logger.info("Setting model type to ", settings$model$name)
+    } else if (model$model_type != settings$model$name) {
+      logger.warn("Specified model type [", settings$model$name, "] does not match model_type in database [", model$model_type, "]")
+    }
+
+    if (is.null(settings$model$binary)) {
+      if ((is.null(model$binary) && model$binary == "")) {
+        logger.severe("No model binary specified.")
+      }
+      settings$model$binary <- tail(strsplit(model$binary, ":")[[1]], 1)
+      logger.info("Setting model binary to ", settings$model$binary)
+    } else if (model$binary != settings$model$binary) {
+      logger.warn("Specified binary [", settings$model$binary, "] does not match model_path in database [", model$binary, "]")
     }
   }
-  return(xml)
+
+  # check siteid with values
+  if (is.null(settings$run$site$id)) {
+    settings$run$site$id <- -1
+  } else if (settings$run$site$id >= 0) {
+    site <- db.query(paste("SELECT * FROM sites WHERE id =", settings$run$site$id), params=settings$database);
+
+    if (is.null(settings$run$site$name)) {
+      if ((is.null(site$sitename) && site$sitename == "")) {
+        logger.info("No site name specified.")
+        settings$run$site$name <- "NA"
+      } else {
+        settings$run$site$name <- site$sitename        
+        logger.info("Setting site name to ", settings$run$site$name)
+      }
+    } else if (site$sitename != settings$run$site$name) {
+      logger.warn("Specified site name [", settings$run$site$name, "] does not match sitename in database [", site$sitename, "]")
+    }
+
+    if (is.null(settings$run$site$lat)) {
+      if ((is.null(site$lat) && site$lat == "")) {
+        logger.severe("No lat specified for site.")
+      } else {
+        settings$run$site$lat <- as.numeric(site$lat)
+        logger.info("Setting site lat to ", settings$run$site$lat)
+      }
+    } else if (as.numeric(site$lat) != as.numeric(settings$run$site$lat)) {
+      logger.warn("Specified site lat [", settings$run$site$lat, "] does not match lat in database [", site$lat, "]")
+    }
+
+    if (is.null(settings$run$site$lon)) {
+      if ((is.null(site$lon) && site$lon == "")) {
+        logger.severe("No lon specified for site.")
+      } else {
+        settings$run$site$lon <- as.numeric(site$lon)
+        logger.info("Setting site lon to ", settings$run$site$lon)
+      }
+    } else if (as.numeric(site$lon) != as.numeric(settings$run$site$lon)) {
+      logger.warn("Specified site lon [", settings$run$site$lon, "] does not match lon in database [", site$lon, "]")
+    }
+  }
+
+  # check/create the pecan folder
+  if (is.null(settings$outdir)) {
+    logger.severe("No output folder specified")
+  } else {
+    logger.debug("output folder =", settings$outdir)
+  }
+  if (!file.exists(settings$outdir) && !dir.create(settings$outdir, recursive=TRUE)) {
+    logger.severe("Could not create folder", settings$outdir)
+  }
+
+  # check/create the run folder
+  if (settings$run$host$name == "localhost") {
+    if (is.null(settings$run$host$rundir)) {
+      settings$run$host$rundir <- file.path(settings$outdir, "run")
+    }
+    settings$rundir <- settings$run$host$rundir
+  } else {
+    if (is.null(settings$rundir)) {
+      settings$rundir <- file.path(settings$outdir, "run")
+    }
+  }
+  if (!file.exists(settings$rundir) && !dir.create(settings$rundir, recursive=TRUE)) {
+    logger.severe("Could not create folder", settings$rundir)
+  }
+
+  # check/create the out folder
+  if (settings$run$host$name == "localhost") {
+    if (is.null(settings$run$host$outdir)) {
+      settings$run$host$outdir <- file.path(settings$outdir, "out")
+    }
+    settings$modeloutdir <- settings$run$host$outdir
+  } else {
+    if (is.null(settings$modeloutdir)) {
+      settings$modeloutdir <- file.path(settings$outdir, "out")
+    }
+  }
+  if (!file.exists(settings$modeloutdir) && !dir.create(settings$modeloutdir, recursive=TRUE)) {
+    logger.severe("Could not create folder", settings$modeloutdir)
+  }
+
+  # check/create the pft folders
+  for (i in 1:sum(names(unlist(settings$pfts)) == "pft.name")) {
+    if (is.null(settings$pfts[i]$pft$outdir)) {
+      settings$pfts[i]$pft$outdir <- file.path(settings$outdir, "pft", settings$pfts[i]$pft$name)
+      logger.info("Storing pft", settings$pfts[i]$pft$name, "in", settings$pfts[i]$pft$outdir)      
+    } else {
+      logger.debug("Storing pft", settings$pfts[i]$pft$name, "in", settings$pfts[i]$pft$outdir)      
+    }
+    out.dir <- settings$pfts[i]$pft$outdir
+    if (!file.exists(out.dir) && !dir.create(out.dir, recursive=TRUE)) {
+      logger.severe("Could not create folder", out.dir)
+    }
+  }
+
+  # add defaults for qsub
+  if (settings$run$host$name != "localhost") {
+    if (is.null(settings$run$host$qsub)) {
+      settings$run$host$qsub = "qsub -N @NAME@ -o @STDOUT@ -e @STDERR@"
+      logger.info("qsub not specified using default value :", settings$run$host$qsub)
+    }
+    if (is.null(settings$run$host$qsub.jobid)) {
+      settings$run$host$qsub.jobid = "Your job ([0-9]+) .*"
+      logger.info("qsub.jobid not specified using default value :", settings$run$host$qsub.jobid)
+    }
+    if (is.null(settings$run$host$qstat)) {
+      settings$run$host$qstat = "qstat -j @JOBID@ 2>1 >/dev/null || echo DONE"
+      logger.info("qstat not specified using default value :", settings$run$host$qstat)
+    }
+  }
+
+  # check for workflow defaults
+  if (settings$bety$write) {
+    if (!'workflow' %in% names(settings)) {
+      con <- db.open(settings$database)
+      if(!is.character(con)){
+        db.query(paste("INSERT INTO workflows (site_id, model_id, hostname, start_date, end_date, started_at, created_at, folder) values ('",
+                         settings$run$site$id, "','", settings$model$id, "', '", settings$run$host$name, "', '",
+                         settings$run$start.date, "', '", settings$run$end.date, "', NOW(), NOW(), '", dirname(settings$outdir), "')", sep=''), con)
+        settings$workflow$id = db.query(paste("SELECT LAST_INSERT_ID() AS ID"), con)[['ID']]
+        db.close(con)
+      }
+    }
+  } else {
+    settings$workflow$id = "NA"
+  }
+
+  # all done return cleaned up settings
+  invisible(settings)
 }
 
-##--------------------------------------------------------------------------------------------------#
-## EXTERNAL FUNCTIONS
-##--------------------------------------------------------------------------------------------------#
 
 ##' Loads PEcAn settings file
 ##' 
-##' This will load the PEcAn settings file in the following order,
-##' merging their values and overriding any values that are specified
-##' in a file later in the order
+##' This will try and find the PEcAn settings file in the following order:
 ##' 
 ##' \enumerate{
-##' \item {/etc/pecan.xml}{global file for all users}
-##' \item {~/.pecan.xml}{settings for all projects for the user}
-##' \item {PECAN_SETTINGS}{environment variable PECAN_SETTINGS pointing to a specific file}
-##' \item {inputfile}{passed as argument to function}
 ##' \item {--settings <file>}{passed as command line argument using --settings}
+##' \item {inputfile}{passed as argument to function}
+##' \item {PECAN_SETTINGS}{environment variable PECAN_SETTINGS pointing to a specific file}
+##' \item {./pecan.xml}{pecan.xml in the current folder}
 ##' }
-##' @param inputfile the PEcAn settings file to be merged with the others.
+##' @param inputfile the PEcAn settings file to be used.
 ##' @param outputfile the name of file to which the settings will be
 ##'        written inside the outputdir.
 ##' @return list of all settings as loaded from the XML file(s)
@@ -182,184 +292,55 @@ listToXml <- function(item, tag){
 ##' settings <- read.settings(test.settings.file)
 ##' }
 read.settings <- function(inputfile=NULL, outputfile="pecan.xml"){
-  xml <- NULL
-  
-  ## 1 load /etc/pecan.xml
-  if (file.exists("/etc/pecan.xml")) {
-    xml <- xmlMerge(xml, xmlParse("/etc/pecan.xml"))
-  }
-  
-  ## 2 merge ~/.pecan.xml
-  if (file.exists("~/.pecan.xml")) {
-    xml <- xmlMerge(xml, xmlParse("~/.pecan.xml"))
-  }
-  
-  ## 3 merge pecan.xml
-  if (file.exists("pecan.xml")) {
-    xml <- xmlMerge(xml, xmlParse("pecan.xml"))
-  }
-  
-  ## 4 merge PECAN_SETTINGS
-  if (file.exists(Sys.getenv("PECAN_SETTINGS"))) {
-    xml <- xmlMerge(xml, xmlParse(Sys.getenv("PECAN_SETTINGS")))
-  }
-  
-  ## 5 merge file
-  if(!is.null(inputfile) | class(inputfile) == "character"){
-    if(any(c(file.exists(inputfile), grepl("<pecan>", inputfile)))){ 
-      xml <- xmlMerge(xml, xmlParse(inputfile))
-    }
-  }
-  ## 6 merge command line arguments
-  loc <- which(commandArgs() == "--settings")
-  if (length(loc) != 0) {
-    for(idx in loc) {
-      if (!is.null(commandArgs()[idx+1]) && file.exists(commandArgs()[idx+1])) {
-        xml <- xmlMerge(xml, xmlParse(commandArgs()[idx+1]))
-      }
-    }
-  }
-  
-  ## make sure something was loaded
-  if (is.null(xml)) {
-    logger.error("Did not find any settings file to load.")
-    stop("Did not find any settings file to load.")
-  }
-  
-  ## convert the xml to a list for ease and return
-  settings <<- xmlToList(xml)
-
-  ## do a sanity check
-  check.settings(settings)
-  
-  ## crate the outputfolder
-  if (is.null(settings$outdir)) {
-    settings$outdir <- tempdir()
-    logger.warn("No output folder specified, using", settings$outdir)
-  } else {
-    logger.debug("output folder =", settings$outdir)
-  }
-  if (!file.exists(settings$outdir) && !dir.create(settings$outdir, recursive=TRUE)) {
-    logger.error("Could not create folder", settings$outdir)
-    stop("Could not create out folder.")
-  }
-  
-  ## create the model configuration folder
-  if(!is.null(settings$run$host$name) && (settings$run$host$name == "localhost")) {
-    if (is.null(settings$run$host$rundir)) {
-      if (is.null(settings$rundir)) {
-        settings$rundir <- file.path(settings$outdir, "run")
-      }
-      settings$run$host$rundir <- settings$rundir
-      logger.info("No output folder for model configuration using", settings$run$host$rundir)
-    } else {
-      if (is.null(settings$rundir)) {
-        settings$rundir <- settings$run$host$rundir
-      }
-      logger.debug("model configuration folder =", settings$run$host$rundir)
-    }
-    if (settings$rundir != settings$run$host$rundir) {
-      settings$rundir <- settings$run$host$rundir
-      logger.warn("rundir does not match run$host$rundir, setting to", settings$rundir)
-    }
-    if (!file.exists(settings$run$host$rundir) && !dir.create(settings$run$host$rundir, recursive=TRUE)) {
-      logger.error("Could not create folder", settings$run$host$rundir)
-      stop("Could not create model configuration folder.")
-    }
-
-    ## create the model output folder
-    if (is.null(settings$run$host$outdir)) {
-      if (is.null(settings$modeloutdir)) {
-        settings$modeloutdir <- file.path(settings$outdir, "out")
-      }
-      settings$run$host$outdir <- settings$modeloutdir
-      logger.info("No output folder for model runs using", settings$run$host$outdir)
-    } else {
-      if (is.null(settings$modeloutdir)) {
-        settings$modeloutdir <- settings$run$host$outdir
-      }
-      logger.debug("model output folder =", settings$run$host$outdir)
-    }
-    if (settings$modeloutdir != settings$run$host$outdir) {
-      settings$modeloutdir <- settings$run$host$outdir
-      logger.warn("modeloutdir does not match run$host$outdir, setting to", settings$modeloutdir)
-    }
-    if (settings$modeloutdir != settings$run$host$outdir) {
-      settings$modeloutdir <- settings$run$host$outdir
-      logger.warn("modeloutdir does not match run$host$outdir, setting to", settings$modeloutdir)
-    }
-    if (!file.exists(settings$run$host$outdir) && !dir.create(settings$run$host$outdir, recursive=TRUE)) {
-      logger.error("Could not create folder", settings$run$host$outdir)
-      stop("Could not create model output folder.")
-    }
-
-  } else {
-    ## create the run folder to store run configurations
-    if (is.null(settings$rundir)) {
-      settings$rundir <- file.path(settings$outdir, "run")
-      logger.warn("No run folder specified, using", settings$rundir)
-    } else {
-      logger.debug("run folder =", settings$rundir)
-    }
-    if (!file.exists(settings$rundir) && !dir.create(settings$rundir, recursive=TRUE)) {
-      logger.error("Could not create folder", settings$rundir)
-      stop("Could not create run folder.")
-    }
-
-    ## create the model output folder to store run outputs
-    if (is.null(settings$modeloutdir)) {
-      settings$modeloutdir <- file.path(settings$outdir, "out")
-      logger.warn("No modeloutdir folder specified, using", settings$modeloutdir)
-    } else {
-      logger.debug("modeloutdir folder =", settings$modeloutdir)
-    }
-    if (!file.exists(settings$modeloutdir) && !dir.create(settings$modeloutdir, recursive=TRUE)) {
-      logger.error("Could not create folder", settings$modeloutdir)
-      stop("Could not create modeloutdir folder.")
-    }
-  }
-
-  ## create the PFT folders
-  for (i in 1:sum(names(unlist(settings$pfts)) == "pft.name")) {
-    if (is.null(settings$pfts[i]$pft$outdir)) {
-      settings$pfts[i]$pft$outdir <- file.path(settings$outdir, "pft", settings$pfts[i]$pft$name)
-      logger.info("No output folder specified for", settings$pfts[i]$pft$name, "will use", settings$pfts[i]$pft$outdir);
-    }
-    out.dir <- settings$pfts[i]$pft$outdir
-    logger.debug("Storing pft", settings$pfts[i]$pft$name, "in", out.dir)
-    if (!file.exists(out.dir) && !dir.create(out.dir, recursive=TRUE)) {
-      logger.error("Could not create folder", out.dir)
-      stop("Could not create pft folders.")
-    }
-  }
-  
-  ## create the workflow
-  if (!'workflow' %in% names(settings)) {
-    con <- try(query.base.con(settings), silent=TRUE)
-    if(!is.character(con)){
-      query.base(paste("INSERT INTO workflows (site_id, model_id, hostname, start_date, end_date, started_at, created_at, folder) values ('",
-                       settings$run$site$id, "','", settings$model$id, "', '", settings$run$host$name, "', '",
-                       settings$run$start.date, "', '", settings$run$end.date, "', NOW(), NOW(), '", dirname(settings$outdir), "')", sep=''), con)
-      settings$workflow$id = query.base(paste("SELECT LAST_INSERT_ID() AS ID"), con)[['ID']]
-      dbDisconnect(con)
-    }
-  }
-
-  ## save the merged pecan.xml
   if (is.null(outputfile)) {
     outputfile="pecan.xml"
   }
-  output <- file.path(settings$outdir, outputfile)
-  if (file.exists(output)) {
-    logger.warn(paste("File already exists [", output, "] file will be overwritten"))
-  } 
-  saveXML(listToXml(settings, "pecan"), file=output)
+
+  loc <- which(commandArgs() == "--settings")
+  if (length(loc) != 0) {
+    # 1 filename is passed as argument to R
+    for(idx in loc) {
+      if (!is.null(commandArgs()[idx+1]) && file.exists(commandArgs()[idx+1])) {
+        logger.info("Loading --settings=", idx+1)
+        xml <- xmlParse(commandArgs()[idx+1])
+        break
+      }
+    }
+
+  } else if(!is.null(inputfile) && file.exists(inputfile)) {
+    # 2 filename passed into function
+    logger.info("Loading inpufile=", inputfile)
+    xml <- xmlParse(inputfile)
+
+  } else if (file.exists(Sys.getenv("PECAN_SETTINGS"))) {
+    # 3 load from PECAN_SETTINGS
+    logger.info("Loading PECAN_SETTINGS=", Sys.getenv("PECAN_SETTINGS"))
+    xml <- xmlParse(Sys.getenv("PECAN_SETTINGS"))
+
+  } else if (file.exists("pecan.xml")) {
+    # 4 load ./pecan.xml
+    logger.info("Loading ./pecan.xml")
+    xml <- xmlParse("pecan.xml")
+
+  } else {
+    # file not found
+    stop("Could not find a pecan.xml file")
+  }
+
+  ## convert the xml to a list for ease and return
+  settings <- check.settings(xmlToList(xml))
   
+  ## save the checked/fixed pecan.xml
+  if (file.exists(outputfile)) {
+    logger.warn(paste("File already exists [", outputfile, "] file will be overwritten"))
+  }
+  saveXML(listToXml(settings, "pecan"), file=outputfile)
+
   ## setup Rlib from settings
-  if(!is.null(settings$Rlib)){ 
+  if(!is.null(settings$Rlib)){
     .libPaths(settings$Rlib)
   }
-  
+
   ## Return settings file as a list
   invisible(settings)
 }
