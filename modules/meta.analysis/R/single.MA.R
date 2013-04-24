@@ -12,7 +12,7 @@
 ##' single.MA. This will allow power analysis  to run repeated MA outside of the
 ##' full loop over traits and PFTs. 
 ##' @title Single MA
-##' @param data 
+##' @param data one data.frame output from 'jagify', as in jagify(trait.data)
 ##' @param j.chains number of chains in meta-analysis
 ##' @param j.iter  number of mcmc samples
 ##' @param tauA prior on variance parameters
