@@ -74,6 +74,17 @@ check.settings <- function(settings) {
 
   # TODO check userid and userpassword
 
+  # check database version
+  versions <- db.query("SELECT version FROM schema_migrations WHERE version >= 20130222222929;", params=settings$database)[['version']]
+  if (length(versions) == 0) {
+    logger.severe("Database is out of date, please update the database.")
+  }
+  if (length(versions) > 1) {
+    logger.warn("Database is more recent than PEcAn expects this could result in PEcAn not working as expected.")
+  } else {
+    logger.debug("Database is correct version", versions[1], ".")
+  }
+
   # make sure there are pfts defined
   if (is.null(settings$pfts) || (length(settings$pfts) == 0)) {
     logger.severe("No PFTS specified.")
@@ -295,7 +306,9 @@ read.settings <- function(inputfile=NULL, outputfile="pecan.xml"){
   if (is.null(outputfile)) {
     outputfile="pecan.xml"
   }
-
+  if(inputfile == ""){
+    logger.warn("settings files specified as empty string; \n\t\tthis may be caused by an incorrect argument to system.file.")
+  }
   loc <- which(commandArgs() == "--settings")
   if (length(loc) != 0) {
     # 1 filename is passed as argument to R
