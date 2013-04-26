@@ -1,0 +1,32 @@
+Title
+========================================================
+#-------------------------------------------------------------------------------
+# Copyright (c) 2012 University of Illinois, NCSA.
+# All rights reserved. This program and the accompanying materials
+# are made available under the terms of the 
+# University of Illinois/NCSA Open Source License
+# which accompanies this distribution, and is available at
+# http://opensource.ncsa.illinois.edu/license.html
+#-------------------------------------------------------------------------------
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring web pages (click the **MD** toolbar button for help on Markdown).
+
+When you click the **Knit HTML** button a web page will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+Meta-analysis is used to synthesize the available trait data and give out posterior parameter estimates of plant traits which are going to be used in anecosystem model.
+Individual Meta-analysis
+##'  Individual meta-analysis for a specific trait and PFT is run by the function
+##' single.MA. This will allow power analysis  to run repeated MA outside of the
+##' full loop over traits and PFTs. 
+```{r}
+library(devtools)
+document("modules/meta.analysis")
+test("modules/meta.analysis")
+library(PEcAn.utils)
+```
+
+You can also embed plots, for example:
+
+```{r fig.width=7, fig.height=6}
+plot(cars)
+```
+
